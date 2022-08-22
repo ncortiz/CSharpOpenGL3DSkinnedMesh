@@ -11,7 +11,7 @@ using Assimp;
 
 using SixLabors.ImageSharp;
 using SixLabors.ImageSharp.PixelFormats;
-
+using System.Diagnostics;
 
 namespace PotatoRPGogl
 {
@@ -47,7 +47,7 @@ namespace PotatoRPGogl
 
     class Program
     {
-        const float PI2Rad = (float)Math.PI / 180.0f;
+        const float Deg2Rad = (float)Math.PI / 180.0f;
 
         static IWindow window;
         static GL Gl;
@@ -88,6 +88,8 @@ namespace PotatoRPGogl
         uniform sampler2D diffuseMap;
 
         uniform vec3 lightPos;
+        uniform vec3 ambientCol;
+        uniform vec3 lightCol;
         uniform vec3 viewPos;
 
         void main()
@@ -97,21 +99,17 @@ namespace PotatoRPGogl
             vec3 light_dir = normalize(lightPos - frag_pos);
             float att = max(dot(norm, light_dir), 0.0);
 
-            vec3 ambient = vec3(0.1f, 0.2f, 1.0f);
-            ambient = ambient * 0.8f;
-
-            vec3 lightColor = vec3(1.0f,0.8f,0.0f);
-            vec3 diffuse = lightColor * att;
+            vec3 diffuse = lightCol * att;
 
             float specularStrength = 0.5;
             vec3 viewDir = normalize(viewPos - frag_pos);
             vec3 reflectDir = reflect(-light_dir, norm);
             float spec = pow(max(dot(viewDir, reflectDir), 0.0), 64);
-            vec3 specular = specularStrength * spec * lightColor; 
+            vec3 specular = specularStrength * spec * lightCol; 
 
             //FragColor = vec4(color, 1.0f);//vec4(1.0f, 0.5f, 0.2f, 1.0f);
 
-            vec3 result = (ambient + diffuse + specular) *  texColor.xyz;
+            vec3 result = (ambientCol + diffuse + specular) *  texColor.xyz;
             FragColor = vec4(result, 1.0);
         }
         ";
@@ -144,7 +142,7 @@ namespace PotatoRPGogl
                     vertices.Add(vertex.normal.Z);
 
                     vertices.Add(vertex.texCoords.X);
-                    vertices.Add(vertex.texCoords.Y);
+                    vertices.Add(1.0f - vertex.texCoords.Y);
                 }
 
                 indices.AddRange(mesh.indices);
@@ -163,17 +161,24 @@ namespace PotatoRPGogl
             window.Load += OnLoad;
             window.Update += OnUpdate;
             window.Render += OnRender;
+            window.VSync = false;
 
             window.Run();
         }
 
         static unsafe void OnLoad()
         {
-
             IInputContext input = window.CreateInput();
-            for (int i = 0; i < input.Keyboards.Count; i++)
+            foreach(var keyboard in input.Keyboards)
             {
-                input.Keyboards[i].KeyDown += KeyDown;
+                keyboard.KeyDown += KeyDown;
+                keyboard.KeyUp += KeyUp;
+            }
+
+            foreach(var mice in input.Mice)
+            {
+                mice.Cursor.CursorMode = CursorMode.Raw;
+                mice.MouseMove += OnMouseMove;
             }
 
             Gl = GL.GetApi(window);
@@ -185,7 +190,8 @@ namespace PotatoRPGogl
             Gl.Enable(GLEnum.DepthTest);
             Gl.DepthFunc(GLEnum.Lequal);
 
-            LoadImage("./Res/Models/heraklios_body_diff.png");
+            LoadImage(1, "./Res/Models/heraklios_diff.png");
+            LoadImage(0, "./Res/Models/heraklios_body_diff.png");
 
             Vao = Gl.GenVertexArray();
             Gl.BindVertexArray(Vao);
@@ -251,24 +257,46 @@ namespace PotatoRPGogl
         static float t = 0;
         static Matrix4X4<float> model;
 
+        static Vec3f ambientColor = new Vec3f(93.0f/255.0f, 140.0f/255.0f, 174.0f/255.0f);
+        static Vec3f camPos = new Vec3f(0, 1.2f, -5);
+        static Vec3f camFwd, camRight, camUp;
+
+        static Vec3f toVec3f(Assimp.Vector3D v)
+            => new Vec3f(v.X, v.Y, v.Z);
+
+        static float deltaTime;
+        static DateTime lastTime;
+        static Quaternion<float> camRot = Quaternion<float>.Identity;
+
         static unsafe void OnRender(double obj)
         {
-            Gl.ClearColor(0.1f, 0.2f, 1, 1);
+            var dt = DateTime.Now - lastTime;
+            lastTime = DateTime.Now;
+            deltaTime = (float)dt.TotalSeconds; 
+
+            Gl.ClearColor(ambientColor.X, ambientColor.Y, ambientColor.Z, 1);
             Gl.Clear((uint)ClearBufferMask.ColorBufferBit | (uint)ClearBufferMask.DepthBufferBit);
 
             Gl.BindVertexArray(Vao);
             Gl.UseProgram(shaderId);
 
-            t += 1f;
-            var camPos = new Vec3f(0, 1.2f, -5);
+            t += 360.0f * deltaTime;
+            
+            var camFrontAssimp = Quaternion.Rotate(new Assimp.Vector3D(0, 0, 1), new Quaternion(camRot.W, camRot.X, camRot.Y, camRot.Z));
+            camFwd = toVec3f(camFrontAssimp);
 
-            var camFront = new Vec3f(0, 0, 1);
-            var view = Matrix4X4.CreateLookAt(camPos, camPos + camFront, new Vec3f(0, 1, 0));
-            var projection = Matrix4X4.CreatePerspectiveFieldOfView<float>(60.0f * PI2Rad, 800 / 600, 0.01f, 100.0f);
+            var camRightAssimp = Quaternion.Rotate(new Assimp.Vector3D(1, 0, 0), new Quaternion(camRot.W, camRot.X, camRot.Y, camRot.Z));
+            camRight = toVec3f(camRightAssimp);
+
+            var camUpAssimp = Quaternion.Rotate(new Assimp.Vector3D(0, 1, 0), new Quaternion(camRot.W, camRot.X, camRot.Y, camRot.Z));
+            camUp = toVec3f(camUpAssimp);
+
+            var view = Matrix4X4.CreateLookAt(camPos, camPos + camFwd, camUp);
+            var projection = Matrix4X4.CreatePerspectiveFieldOfView<float>(60.0f * Deg2Rad, 800 / 600, 0.01f, 100.0f);
 
             model = Matrix4X4<float>.Identity;
             model = Matrix4X4.Multiply(model, Matrix4X4.CreateScale(0.02f));
-            model = Matrix4X4.Multiply(Matrix4X4.CreateRotationY((t % 360) * PI2Rad), model);
+            model = Matrix4X4.Multiply(Matrix4X4.CreateRotationY((t % 360) * Deg2Rad), model);
 
             mvpMatrix = Mat4f.Identity;
             mvpMatrix = Matrix4X4.Multiply(mvpMatrix, model);
@@ -279,22 +307,41 @@ namespace PotatoRPGogl
             SetUniformMat4f(shaderId, "modelViewProj", mvpMatrix);
 
             SetUniform(shaderId, "diffuseMap", 0);
+            SetUniformVec3(shaderId, "lightCol", new Vec3f(1,1,0));
             SetUniformVec3(shaderId, "lightPos", new Vec3f(0.0f, 4.0f, 5.0f));
             SetUniformVec3(shaderId, "viewPos", camPos);
+            SetUniformVec3(shaderId, "ambientCol", ambientColor);
 
-            Gl.ActiveTexture(GLEnum.Texture0);
-            Gl.BindTexture(TextureTarget.Texture2D, tex);
- 
+            
+
+            int idx = 0;
             foreach(var mesh in meshes)
             {
+                Gl.ActiveTexture(GLEnum.Texture0 + idx);
+                Gl.BindTexture(TextureTarget.Texture2D, tex);
+
                 Gl.DrawElementsBaseVertex(GLEnum.Triangles, (uint)mesh.indices.Length, DrawElementsType.UnsignedInt,
                     (void*)(sizeof(uint) * mesh.baseIndex), mesh.baseVertex);
+
+                idx++;
             }
         }
 
+        static DateTime lastFPSReadout;
+
         static void OnUpdate(double obj)
         {
+            float camSpeed = 5f * deltaTime;
+            camPos += camFwd * inputAxes.Y * camSpeed + camRight * inputAxes.X * camSpeed + camUp * inputAxes.Z * camSpeed;
 
+            var euler = Quaternion<float>.CreateFromYawPitchRoll(0, 0, -45.0f * Deg2Rad * inputAxes.W * deltaTime);
+            camRot = Quaternion<float>.Multiply(camRot, euler);
+
+            if ((DateTime.Now - lastFPSReadout).TotalSeconds > 0.3f)
+            {
+                lastFPSReadout = DateTime.Now;
+                window.Title = $"PotatoRPG FPS: {1.0f / deltaTime}";
+            }
         }
 
         static void OnClose()
@@ -307,11 +354,70 @@ namespace PotatoRPGogl
             Gl.DeleteTexture(tex);
         }
 
+        static Vec4f inputAxes = new Vec4f(0, 0, 0, 0);
+
         private static void KeyDown(IKeyboard arg1, Key arg2, int arg3)
         {
             if (arg2 == Key.Escape)
             {
                 window.Close();
+            }
+
+            if (arg2 == Key.W)
+                inputAxes.Y = 1;
+            if (arg2 == Key.S)
+                inputAxes.Y = -1;
+
+            if (arg2 == Key.A)
+                inputAxes.X = 1;
+            if (arg2 == Key.D)
+                inputAxes.X = -1;
+
+            if (arg2 == Key.ShiftLeft)
+                inputAxes.Z = -1;
+            if (arg2 == Key.Space)
+                inputAxes.Z = 1;
+
+            if (arg2 == Key.Q)
+                inputAxes.W = -1;
+            if (arg2 == Key.E)
+                inputAxes.W = 1;
+        }
+
+        private static void KeyUp(IKeyboard arg1, Key arg2, int arg3)
+        {
+            if (arg2 == Key.W)
+                inputAxes.Y = 0;
+            if (arg2 == Key.S)
+                inputAxes.Y = 0;
+            if (arg2 == Key.A)
+                inputAxes.X = 0;
+            if (arg2 == Key.D)
+                inputAxes.X = 0;
+            if (arg2 == Key.Space)
+                inputAxes.Z = 0;
+            if (arg2 == Key.ShiftLeft)
+                inputAxes.Z = 0;
+            if (arg2 == Key.Q)
+                inputAxes.W = 0;
+            if (arg2 == Key.E)
+                inputAxes.W = 0;
+        }
+
+        static System.Numerics.Vector2 lastMousePos;
+
+        private static unsafe void OnMouseMove(IMouse mouse, System.Numerics.Vector2 position)
+        {
+            var lookSensitivity = 0.1f;
+            if (lastMousePos == default) { lastMousePos = position; }
+            else
+            {
+                var xOffset = (position.X - lastMousePos.X) * lookSensitivity;
+                var yOffset = (position.Y - lastMousePos.Y) * lookSensitivity;
+                lastMousePos = position;
+
+                var euler = Quaternion<float>.CreateFromYawPitchRoll(-xOffset * Deg2Rad, yOffset * Deg2Rad, 0);
+                camRot = Quaternion<float>.Multiply(camRot, euler);
             }
         }
 
@@ -378,10 +484,13 @@ namespace PotatoRPGogl
             return allVertices;
         }
 
-        unsafe static void LoadImage(string path)
+        unsafe static void LoadImage(int index, string path)
         {
+            if (index > 31)
+                throw new Exception("Attempted to load image to slot greater than 31 (max slot)");
+
             tex = Gl.GenTexture();
-            Gl.ActiveTexture(GLEnum.Texture0);
+            Gl.ActiveTexture(GLEnum.Texture0 + index);
             Gl.BindTexture(TextureTarget.Texture2D, tex);
 
             using (var img = Image.Load<Rgba32>(path))
