@@ -1,4 +1,11 @@
-﻿
+﻿Finish adding bone data to mesh
+and calculating everything super simple just look at page:
+https://github.com/Jas03x/GL_GameKit/blob/436a7921f0c342de681732f6dd850277626fc03a/src/ColladaLoader.cpp
+
+
+https://github.com/hasinaxp/skeletal_animation-_assimp_opengl/blob/master/main.cpp
+
+
 Obj, fbx, dae file importing   V
 Per mesh textures
 

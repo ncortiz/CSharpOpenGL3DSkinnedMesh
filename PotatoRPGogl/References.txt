@@ -1,4 +1,33 @@
-﻿
+﻿c# - Construct Assimp bone hierarchy, beginning at the root - Stack Overflow
+https://stackoverflow.com/questions/51225072/construct-assimp-bone-hierarchy-beginning-at-the-root
+
+Skeletal animation, ASSIMP, glm and me in between&#33; - Graphics and GPU Programming - GameDev.net
+https://www.gamedev.net/forums/topic/688121-skeletal-animation-assimp-glm-and-me-in-between33/
+
+Bones animation with OpenGL, ASSIMP and GLM | xphere (dot) me
+http://www.xphere.me/2019/05/bones-animation-with-openglassimpglm/
+
+assimp-Cpp-OpenGL-skeletal-animation/Mesh.cpp at master · vovan4ik123/assimp-Cpp-OpenGL-skeletal-animation
+https://github.com/vovan4ik123/assimp-Cpp-OpenGL-skeletal-animation/blob/master/Load_3D_model_2/Model.cpp
+
+ASSIMP Skeletal Animation Tutorial #2 – Loading Up The Bone Data – RealityMultiplied
+https://realitymultiplied.wordpress.com/2016/07/23/assimp-skeletal-animation-tutorial-2-loading-up-the-bone-data/
+
+c++ - What does mOffsetMatrix actually do in Assimp? - Stack Overflow
+https://stackoverflow.com/questions/50143649/what-does-moffsetmatrix-actually-do-in-assimp
+
+c++ - matrix order in skeletal animation using assimp - Stack Overflow
+https://stackoverflow.com/questions/29191344/matrix-order-in-skeletal-animation-using-assimp
+
+c++ - Skeletal animation with ASSIMP, COLLADA, and glm - Game Development Stack Exchange
+https://gamedev.stackexchange.com/questions/96074/skeletal-animation-with-assimp-collada-and-glm
+
+Use assimp for skeletal animation HELP! - Graphics and GPU Programming - GameDev.net
+https://www.gamedev.net/forums/topic/694891-use-assimp-for-skeletal-animation-help/
+
+
+
+
 https://www.youtube.com/watch?v=sP_kiODC25Q&ab_channel=OGLDEV
 
 references: (assimp skeletal anims + fix to gaps? by using diff draw func.)

@@ -50,6 +50,9 @@
     <None Update="Res\Models\cube3_000001.obj">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </None>
+    <None Update="Res\Models\diffuse.png">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
     <None Update="Res\Models\heraklios.dae">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </None>

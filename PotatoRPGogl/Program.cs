@@ -15,39 +15,19 @@ using System.Diagnostics;
 
 namespace PotatoRPGogl
 {
+    using Vec3 = Silk.NET.Maths.Vector3D;
+
     using Vec3f = Vector3D<float>;
     using Vec2f = Vector2D<float>;
     using Vec4f = Vector4D<float>;
+    using Quat = Quaternion<float>;
+
     using Mat4f = Silk.NET.Maths.Matrix4X4<float>;
-
-    class Mesh
-    {
-        public struct VertexData
-        {
-            public Vec3f position;
-            public Vec3f normal;
-            public Vec2f texCoords;
-            public Vec4f boneWeights;
-            public Vec4f boneIDs;
-        }
-
-        public int[] indices;
-        public VertexData[] vertices;
-        public int baseVertex
-            => vertices.Length;
-        public int baseIndex
-            => indices.Length;
-
-        public Mesh(VertexData[] vertices, int[] indices)
-        {
-            this.vertices = vertices;
-            this.indices = indices;
-        }
-    }
 
     class Program
     {
         const float Deg2Rad = (float)Math.PI / 180.0f;
+
 
         static IWindow window;
         static GL Gl;
@@ -62,19 +42,35 @@ namespace PotatoRPGogl
         in vec3 vPos;
         in vec3 vNorm;
         in vec2 vTexCoords;
+        in vec4 vBoneIndices;  
+        in vec4 vBoneWeights;
 
         out vec3 pass_norm;
         out vec2 pass_texCoords;
         out vec3 frag_pos;
+        out vec3 col_debug;
 
-        uniform mat4 modelViewProj;
+        uniform mat4 bones[53];
+
+        uniform mat4 viewProj;
         uniform mat4 model;
         
         void main()
         {
-            gl_Position = modelViewProj * vec4(vPos.x, vPos.y, vPos.z, 1.0);
-            frag_pos = (model * vec4(vPos, 1.0)).xyz;
-            pass_norm = vNorm;
+            mat4 boneTransform = mat4(0.0);
+
+            boneTransform  +=    bones[int(vBoneIndices.x)] * vBoneWeights.x;
+		    boneTransform  +=    bones[int(vBoneIndices.y)] * vBoneWeights.y;
+		    boneTransform  +=    bones[int(vBoneIndices.z)] * vBoneWeights.z;
+		    boneTransform  +=    bones[int(vBoneIndices.w)] * vBoneWeights.w;
+
+            vec4 pos =  boneTransform * vec4(vPos.xyz, 1.0);
+
+            col_debug = normalize(pos.xyz);
+
+            gl_Position = (viewProj * model * vec4(vPos.xyz,1.0));
+            frag_pos = (model *  vec4(vPos.xyz,1.0)).xyz;
+            pass_norm = normalize((boneTransform * vec4(vNorm, 1.0)).xyz);//vNorm.xyz;
             pass_texCoords = vTexCoords;
         }
         ";
@@ -84,6 +80,8 @@ namespace PotatoRPGogl
         in vec3 pass_norm;
         in vec2 pass_texCoords;
         in vec3 frag_pos;
+        in vec3 col_debug;
+
         out vec4 FragColor;
         uniform sampler2D diffuseMap;
 
@@ -107,51 +105,24 @@ namespace PotatoRPGogl
             float spec = pow(max(dot(viewDir, reflectDir), 0.0), 64);
             vec3 specular = specularStrength * spec * lightCol; 
 
-            //FragColor = vec4(color, 1.0f);//vec4(1.0f, 0.5f, 0.2f, 1.0f);
-
             vec3 result = (ambientCol + diffuse + specular) *  texColor.xyz;
             FragColor = vec4(result, 1.0);
+            //FragColor = vec4(col_debug, 1.0);
         }
         ";
 
-        static int[] index_data;
-        static float[] vertex_data;
-        static Mat4f mvpMatrix;
+        static Tuple<float[], int[]> vertexData;
+        static Mat4f vpMatrix;
         static uint tex;
-        static List<Mesh> meshes;
+        static SkinnedModel skinnedModel;
 
         static void Main(string[] args)
         {
             AssimpContext importer = new AssimpContext();
 
-            meshes = LoadModel(importer, "./Res/Models/heraklios.dae");
-
-            var vertices = new List<float>();
-            var indices = new List<int>();
-
-            foreach(var mesh in meshes)
-            {
-                foreach(var vertex in mesh.vertices)
-                {
-                    vertices.Add(vertex.position.X);
-                    vertices.Add(vertex.position.Y);
-                    vertices.Add(vertex.position.Z);
-
-                    vertices.Add(vertex.normal.X);
-                    vertices.Add(vertex.normal.Y);
-                    vertices.Add(vertex.normal.Z);
-
-                    vertices.Add(vertex.texCoords.X);
-                    vertices.Add(1.0f - vertex.texCoords.Y);
-                }
-
-                indices.AddRange(mesh.indices);
-            }
-
-            vertex_data = vertices.ToArray();
-            index_data = indices.ToArray();
-
-            mvpMatrix = Mat4f.Identity;
+            skinnedModel = new SkinnedModel(Gl, importer, "./Res/Models/heraklios.dae");
+            vertexData = skinnedModel.getVertexData(); 
+            vpMatrix = Mat4f.Identity;
 
             var options = WindowOptions.Default;
             options.Size = new Vector2D<int>(800, 600);
@@ -169,13 +140,13 @@ namespace PotatoRPGogl
         static unsafe void OnLoad()
         {
             IInputContext input = window.CreateInput();
-            foreach(var keyboard in input.Keyboards)
+            foreach (var keyboard in input.Keyboards)
             {
                 keyboard.KeyDown += KeyDown;
                 keyboard.KeyUp += KeyUp;
             }
 
-            foreach(var mice in input.Mice)
+            foreach (var mice in input.Mice)
             {
                 mice.Cursor.CursorMode = CursorMode.Raw;
                 mice.MouseMove += OnMouseMove;
@@ -190,24 +161,23 @@ namespace PotatoRPGogl
             Gl.Enable(GLEnum.DepthTest);
             Gl.DepthFunc(GLEnum.Lequal);
 
-            LoadImage(1, "./Res/Models/heraklios_diff.png");
-            LoadImage(0, "./Res/Models/heraklios_body_diff.png");
+            tex = Utils.LoadImage(Gl, 0, "./Res/Models/heraklios_diff.png");
 
             Vao = Gl.GenVertexArray();
             Gl.BindVertexArray(Vao);
 
             Vbo = Gl.GenBuffer();
             Gl.BindBuffer(BufferTargetARB.ArrayBuffer, Vbo);
-            fixed (void* v = &vertex_data[0])
+            fixed (void* v = &vertexData.Item1[0])
             {
-                Gl.BufferData(BufferTargetARB.ArrayBuffer, (nuint)(vertex_data.Length * sizeof(float)), v, BufferUsageARB.StaticDraw); //Setting buffer data.
+                Gl.BufferData(BufferTargetARB.ArrayBuffer, (nuint)(vertexData.Item1.Length * sizeof(float)), v, BufferUsageARB.StaticDraw); //Setting buffer data.
             }
 
             Ebo = Gl.GenBuffer();
             Gl.BindBuffer(BufferTargetARB.ElementArrayBuffer, Ebo);
-            fixed (void* i = &index_data[0])
+            fixed (void* i = &vertexData.Item2[0])
             {
-                Gl.BufferData(BufferTargetARB.ElementArrayBuffer, (nuint)(index_data.Length * sizeof(uint)), i, BufferUsageARB.StaticDraw); //Setting buffer data.
+                Gl.BufferData(BufferTargetARB.ElementArrayBuffer, (nuint)(vertexData.Item2.Length * sizeof(uint)), i, BufferUsageARB.StaticDraw); //Setting buffer data.
             }
 
             uint vertexShader = Gl.CreateShader(ShaderType.VertexShader);
@@ -244,25 +214,28 @@ namespace PotatoRPGogl
             Gl.DeleteShader(vertexShader);
             Gl.DeleteShader(fragmentShader);
 
-            Gl.VertexAttribPointer(0, 3, VertexAttribPointerType.Float, false, 8 * sizeof(float), (void*)0); //pos
+            Gl.VertexAttribPointer(0, 3, VertexAttribPointerType.Float, false, 16 * sizeof(float), (void*)0); //pos
             Gl.EnableVertexAttribArray(0);
 
-            Gl.VertexAttribPointer(1, 3, VertexAttribPointerType.Float, false, 8 * sizeof(float), (void*)(3 * sizeof(float))); //norms
+            Gl.VertexAttribPointer(1, 3, VertexAttribPointerType.Float, false, 16 * sizeof(float), (void*)(3 * sizeof(float))); //norms
             Gl.EnableVertexAttribArray(1);
 
-            Gl.VertexAttribPointer(2, 2, VertexAttribPointerType.Float, false, 8 * sizeof(float), (void*) (6 * sizeof(float))); //uv
+            Gl.VertexAttribPointer(2, 2, VertexAttribPointerType.Float, false, 16 * sizeof(float), (void*)(6 * sizeof(float))); //uv
             Gl.EnableVertexAttribArray(2);
+
+            Gl.VertexAttribPointer(3, 4, VertexAttribPointerType.Float, false, 16 * sizeof(float), (void*)(8 * sizeof(float))); //bone indices
+            Gl.EnableVertexAttribArray(3);
+
+            Gl.VertexAttribPointer(4, 4, VertexAttribPointerType.Float, false, 16 * sizeof(float), (void*)(12 * sizeof(float))); //bone weights
+            Gl.EnableVertexAttribArray(4);
         }
 
         static float t = 0;
         static Matrix4X4<float> model;
 
-        static Vec3f ambientColor = new Vec3f(93.0f/255.0f, 140.0f/255.0f, 174.0f/255.0f);
+        static Vec3f ambientColor = new Vec3f(93.0f / 255.0f, 140.0f / 255.0f, 174.0f / 255.0f);
         static Vec3f camPos = new Vec3f(0, 1.2f, -5);
         static Vec3f camFwd, camRight, camUp;
-
-        static Vec3f toVec3f(Assimp.Vector3D v)
-            => new Vec3f(v.X, v.Y, v.Z);
 
         static float deltaTime;
         static DateTime lastTime;
@@ -272,7 +245,7 @@ namespace PotatoRPGogl
         {
             var dt = DateTime.Now - lastTime;
             lastTime = DateTime.Now;
-            deltaTime = (float)dt.TotalSeconds; 
+            deltaTime = (float)dt.TotalSeconds;
 
             Gl.ClearColor(ambientColor.X, ambientColor.Y, ambientColor.Z, 1);
             Gl.Clear((uint)ClearBufferMask.ColorBufferBit | (uint)ClearBufferMask.DepthBufferBit);
@@ -280,50 +253,57 @@ namespace PotatoRPGogl
             Gl.BindVertexArray(Vao);
             Gl.UseProgram(shaderId);
 
-            t += 360.0f * deltaTime;
-            
+            t += 180.0f * deltaTime;
+
+            if (t > 360.0f)
+                t = 0;
+
             var camFrontAssimp = Quaternion.Rotate(new Assimp.Vector3D(0, 0, 1), new Quaternion(camRot.W, camRot.X, camRot.Y, camRot.Z));
-            camFwd = toVec3f(camFrontAssimp);
+            camFwd = Utils.FromAssimp(camFrontAssimp);
 
             var camRightAssimp = Quaternion.Rotate(new Assimp.Vector3D(1, 0, 0), new Quaternion(camRot.W, camRot.X, camRot.Y, camRot.Z));
-            camRight = toVec3f(camRightAssimp);
+            camRight = Utils.FromAssimp(camRightAssimp);
 
             var camUpAssimp = Quaternion.Rotate(new Assimp.Vector3D(0, 1, 0), new Quaternion(camRot.W, camRot.X, camRot.Y, camRot.Z));
-            camUp = toVec3f(camUpAssimp);
+            camUp = Utils.FromAssimp(camUpAssimp);
 
             var view = Matrix4X4.CreateLookAt(camPos, camPos + camFwd, camUp);
-            var projection = Matrix4X4.CreatePerspectiveFieldOfView<float>(60.0f * Deg2Rad, 800 / 600, 0.01f, 100.0f);
+            var projection = Matrix4X4.CreatePerspectiveFieldOfView<float>(60.0f * Deg2Rad, 800 / 600, 0.01f, 10000.0f);
 
             model = Matrix4X4<float>.Identity;
-            model = Matrix4X4.Multiply(model, Matrix4X4.CreateScale(0.02f));
-            model = Matrix4X4.Multiply(Matrix4X4.CreateRotationY((t % 360) * Deg2Rad), model);
+            model = Matrix4X4.Multiply(model, Matrix4X4.CreateScale( 0.025f)) ;
+            //model = Matrix4X4.Multiply(model, Matrix4X4.CreateRotationY(t * Deg2Rad));
 
-            mvpMatrix = Mat4f.Identity;
-            mvpMatrix = Matrix4X4.Multiply(mvpMatrix, model);
-            mvpMatrix = Matrix4X4.Multiply(mvpMatrix, view);
-            mvpMatrix = Matrix4X4.Multiply(mvpMatrix, projection);
+            vpMatrix = Mat4f.Identity;
+            vpMatrix = Matrix4X4.Multiply(vpMatrix, view);
+            vpMatrix = Matrix4X4.Multiply(vpMatrix, projection);
 
-            SetUniformMat4f(shaderId, "model", model);
-            SetUniformMat4f(shaderId, "modelViewProj", mvpMatrix);
+            Utils.SetUniform(Gl, shaderId, "model", model);
+            Utils.SetUniform(Gl, shaderId, "viewProj", vpMatrix);
 
-            SetUniform(shaderId, "diffuseMap", 0);
-            SetUniformVec3(shaderId, "lightCol", new Vec3f(1,1,0));
-            SetUniformVec3(shaderId, "lightPos", new Vec3f(0.0f, 4.0f, 5.0f));
-            SetUniformVec3(shaderId, "viewPos", camPos);
-            SetUniformVec3(shaderId, "ambientCol", ambientColor);
+            Utils.SetUniform(Gl, shaderId, "diffuseMap", 0);
+            Utils.SetUniform(Gl, shaderId, "lightCol", new Vec3f(1, 1, 0));
+            Utils.SetUniform(Gl, shaderId, "lightPos", new Vec3f(20f, 5, 5));
+            Utils.SetUniform(Gl, shaderId, "viewPos", camPos);
+            Utils.SetUniform(Gl, shaderId, "ambientCol", ambientColor);
 
-            
-
-            int idx = 0;
-            foreach(var mesh in meshes)
+            foreach (var mesh in skinnedModel.skinnedMeshes)
             {
-                Gl.ActiveTexture(GLEnum.Texture0 + idx);
+                Gl.ActiveTexture(GLEnum.Texture0);
                 Gl.BindTexture(TextureTarget.Texture2D, tex);
+
+                var currentPose = new Mat4f[53];
+                for (int i = 0; i < 53; i++)
+                    currentPose[i] = Mat4f.Identity;
+
+                var elapsedTime = 1;// (float)DateTime.Now.Ticks / 1000;
+
+                skinnedModel.getPose(ref currentPose, mesh.skeleton, elapsedTime);
+
+                Utils.SetUniform(Gl, shaderId, "bones", currentPose.ToArray());
 
                 Gl.DrawElementsBaseVertex(GLEnum.Triangles, (uint)mesh.indices.Length, DrawElementsType.UnsignedInt,
                     (void*)(sizeof(uint) * mesh.baseIndex), mesh.baseVertex);
-
-                idx++;
             }
         }
 
@@ -418,151 +398,6 @@ namespace PotatoRPGogl
 
                 var euler = Quaternion<float>.CreateFromYawPitchRoll(-xOffset * Deg2Rad, yOffset * Deg2Rad, 0);
                 camRot = Quaternion<float>.Multiply(camRot, euler);
-            }
-        }
-
-        static List<Mesh> LoadModel(AssimpContext importer, string path)
-        {
-            Scene scene = importer.ImportFile(path);
-            var allVertices = new List<Mesh>();
-
-            //mats and texs
-
-            foreach(var anim in scene.Animations)
-            {
-            }
-
-            var bones = new List<Bone>();
-
-            int uvsc = 0;
-            foreach (var mesh in scene.Meshes)
-            {
-                var meshVerts = new List<Mesh.VertexData>();
-                var meshIndices = new List<int>();
-
-                var verts = mesh.Vertices;
-                var norms = mesh.HasNormals ? mesh.Normals : null;
-
-                var uvs = mesh.HasTextureCoords(0) ? mesh.TextureCoordinateChannels[0] : null;
-
-                for (int i = 0; i < verts.Count; i++)
-                {
-                    var v = new Mesh.VertexData();
-                    v.position = new Vec3f(verts[i].X, verts[i].Y, verts[i].Z);
-
-                    if (norms != null)
-                        v.normal = new Vec3f(norms[i].X, norms[i].Y, norms[i].Z);
-
-                  //  v.boneWeights = mesh.
-
-                    if (uvs != null)
-                        v.texCoords = new Vec2f(uvs[i].X, uvs[i].Y);
-                    else
-                        uvsc++;
-
-                    
-                    meshVerts.Add(v);
-                }
-
-                foreach (var face in mesh.Faces)
-                {
-                    meshIndices.AddRange(face.Indices);
-                }
-
-                allVertices.Add(new Mesh(meshVerts.ToArray(), meshIndices.ToArray()));
-            }
-
-           /* foreach(var bone in bones)
-            {
-                 bone.VertexWeights[0].
-            }*/
-
-            Console.WriteLine($"[DEBUG] $ Loaded {scene.AnimationCount} animation(s)" +
-                $"" +
-                $" {scene.MeshCount} meshes ");
-
-            return allVertices;
-        }
-
-        unsafe static void LoadImage(int index, string path)
-        {
-            if (index > 31)
-                throw new Exception("Attempted to load image to slot greater than 31 (max slot)");
-
-            tex = Gl.GenTexture();
-            Gl.ActiveTexture(GLEnum.Texture0 + index);
-            Gl.BindTexture(TextureTarget.Texture2D, tex);
-
-            using (var img = Image.Load<Rgba32>(path))
-            {
-                Gl.TexImage2D(TextureTarget.Texture2D, 0, InternalFormat.Rgba8, (uint)img.Width, (uint)img.Height, 0, PixelFormat.Rgba, PixelType.UnsignedByte, null);
-
-                img.ProcessPixelRows(accessor =>
-                {
-                    for (int y = 0; y < accessor.Height; y++)
-                    {
-                        fixed (void* data = accessor.GetRowSpan(y))
-                        {
-                            Gl.TexSubImage2D(TextureTarget.Texture2D, 0, 0, y, (uint)accessor.Width, 1, PixelFormat.Rgba, PixelType.UnsignedByte, data);
-                        }
-                    }
-                });
-            }
-
-            Gl.TexParameter(TextureTarget.Texture2D, GLEnum.TextureWrapS, (int)GLEnum.ClampToEdge);
-            Gl.TexParameter(TextureTarget.Texture2D, GLEnum.TextureWrapT, (int)GLEnum.ClampToEdge);
-            Gl.TexParameter(TextureTarget.Texture2D, GLEnum.TextureMinFilter, (int)GLEnum.LinearMipmapLinear);
-            Gl.TexParameter(TextureTarget.Texture2D, GLEnum.TextureMagFilter, (int)GLEnum.Linear);
-            Gl.TexParameter(TextureTarget.Texture2D, GLEnum.TextureBaseLevel, 0);
-            Gl.TexParameter(TextureTarget.Texture2D, GLEnum.TextureMaxLevel, 8);
-            Gl.GenerateMipmap(TextureTarget.Texture2D);
-
-            Console.WriteLine($"Loaded image ");
-        }
-
-        static unsafe void SetUniform(uint shader, string uniform, float v)
-        {
-            int location = Gl.GetUniformLocation(shaderId, uniform);
-            if (location == -1)
-            {
-                Console.WriteLine($"Cannot find uniform '{uniform}' for shader");
-                return;
-            }
-            Gl.ProgramUniform1(shaderId, location, v);
-        }
-
-        static unsafe void SetUniformVec3(uint shader, string uniform, Vec3f v)
-        {
-            int location = Gl.GetUniformLocation(shaderId, uniform);
-            if (location == -1)
-            {
-                Console.WriteLine($"Cannot find uniform '{uniform}' for shader");
-                return;
-            }
-            Gl.ProgramUniform3(shaderId, location, v.X, v.Y, v.Z);
-        }
-        
-        static unsafe void SetUniformMat4f(uint shader, string uniform, Mat4f mat)
-        {
-            int location = Gl.GetUniformLocation(shaderId, uniform);
-
-            if (location == -1)
-            {
-                Console.WriteLine($"Cannot find uniform '{uniform}' for shader");
-                return;
-            }
-
-            var matrix_values = new float[4 * 4]
-            {
-                mat.M11,mat.M12,mat.M13,mat.M14,
-                mat.M21,mat.M22,mat.M23,mat.M24,
-                mat.M31,mat.M32,mat.M33,mat.M34,
-                mat.M41,mat.M42,mat.M43,mat.M44
-            };
-
-            fixed (float* i = &matrix_values[0])
-            {
-                Gl.UniformMatrix4(location, 1, false, i);
             }
         }
     }
